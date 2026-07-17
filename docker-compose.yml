@@ -1,0 +1,9 @@
+services:
+  newsbot:
+    build: .
+    container_name: newsbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
