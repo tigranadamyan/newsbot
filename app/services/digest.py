@@ -18,10 +18,12 @@ class DigestService:
     """Generates and sends daily digests."""
 
     def __init__(self, bot) -> None:
-        from app.config import config
-
         self._bot = bot
-        self._user_id = config.telegram_user_id
+
+    async def _get_user_id(self) -> int:
+        """Get user ID from DB (lazy import to avoid circular dependency)."""
+        from app.bot.telegram import get_user_id
+        return await get_user_id()
 
     async def send_morning_digest(self) -> None:
         """Generate and send morning digest."""
@@ -85,16 +87,17 @@ class DigestService:
         return "\n".join(lines)
 
     async def _send(self, text: str) -> None:
-        """Send digest to the configured user."""
+        """Send digest to the user."""
         from aiogram.enums import ParseMode
 
-        if not self._user_id:
-            logger.warning("TELEGRAM_USER_ID not set — cannot send digest")
+        uid = await self._get_user_id()
+        if not uid:
+            logger.warning("No user ID — cannot send digest")
             return
 
         try:
             await self._bot.send_message(
-                chat_id=self._user_id,
+                chat_id=uid,
                 text=text,
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=False,

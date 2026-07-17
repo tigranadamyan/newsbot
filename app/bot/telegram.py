@@ -19,6 +19,43 @@ bot = Bot(
 dp = Dispatcher()
 
 FILTER_KEY = "filter_prompt"
+USER_ID_KEY = "telegram_user_id"
+
+
+# ---------------------------------------------------------------------------
+# User ID auto-detection (DB-backed, survives restarts)
+# ---------------------------------------------------------------------------
+
+async def get_user_id() -> int:
+    """Get user ID from DB, fallback to .env config."""
+    from sqlalchemy import select
+
+    from app.database.db import async_session
+    from app.database.models import Setting
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Setting).where(Setting.key == USER_ID_KEY)
+        )
+        row = result.scalar_one_or_none()
+        if row and row.value:
+            return int(row.value)
+    return config.telegram_user_id
+
+
+async def _save_user_id(uid: int) -> None:
+    """Persist user ID to DB."""
+    from app.database.db import async_session
+    from app.database.models import Setting
+
+    async with async_session() as session:
+        setting = await session.get(Setting, USER_ID_KEY)
+        if setting:
+            setting.value = str(uid)
+        else:
+            session.add(Setting(key=USER_ID_KEY, value=str(uid)))
+        await session.commit()
+    logger.info("User ID saved: %d", uid)
 
 
 # ---------------------------------------------------------------------------
@@ -66,9 +103,10 @@ async def _save_filter_prompt(text: str) -> None:
 # ---------------------------------------------------------------------------
 
 async def push_news(news: News, reason: str) -> None:
-    """Send a single news item to the configured user immediately."""
-    if not config.telegram_user_id:
-        logger.warning("TELEGRAM_USER_ID not set — cannot push")
+    """Send a single news item to the user immediately."""
+    uid = await get_user_id()
+    if not uid:
+        logger.warning("No user ID configured — cannot push")
         return
 
     cat_emoji = _category_emoji(news.category or "other")
@@ -85,7 +123,7 @@ async def push_news(news: News, reason: str) -> None:
 
     try:
         await bot.send_message(
-            chat_id=config.telegram_user_id,
+            chat_id=uid,
             text="\n".join(lines),
             disable_web_page_preview=True,
         )
@@ -99,6 +137,9 @@ async def push_news(news: News, reason: str) -> None:
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message) -> None:
+    # Auto-save user ID on first interaction
+    await _save_user_id(message.chat.id)
+
     text = (
         "📰 <b>NewsBot</b> — персональный анти-думскроллинг.\n\n"
         "Я мониторю Meduza RSS и присылаю только те новости, "
